@@ -3582,6 +3582,9 @@ def handle_incoming_message(message: dict) -> Tuple[bool, str, dict]:
 # 8. ROUTE UTAMA FLASK (/webhook & TELEGRAM MINI APP WEB PANEL)
 # =============================================================================
 @app.route("/", methods=["GET"])
+@app.route("/api", methods=["GET"])
+@app.route("/api/", methods=["GET"])
+@app.route("/api/index", methods=["GET"])
 def health_check():
     """Endpoint untuk verifikasi server berjalan."""
     return jsonify({
@@ -3603,6 +3606,7 @@ def health_check():
 
 
 @app.route("/panel", methods=["GET"])
+@app.route("/api/panel", methods=["GET"])
 def web_panel():
     """Menampilkan halaman Telegram Mini App (Web Panel Visual Gudang)."""
     return render_template("panel.html")
@@ -3716,6 +3720,7 @@ def api_leaderboard():
 
 
 @app.route("/webhook", methods=["POST"])
+@app.route("/api/webhook", methods=["POST"])
 def telegram_webhook():
     """Endpoint webhook Telegram."""
     try:
@@ -3744,6 +3749,7 @@ def telegram_webhook():
 # 8. HELPER ROUTES UNTUK VERCEL (WEBHOOK MANAGEMENT & CRON JOBS)
 # =============================================================================
 @app.route("/set_webhook", methods=["GET", "POST"])
+@app.route("/api/set_webhook", methods=["GET", "POST"])
 def set_webhook_route():
     """
     Helper 1-klik untuk mendaftarkan URL Webhook Telegram setelah deploy ke Vercel.
@@ -3766,6 +3772,7 @@ def set_webhook_route():
 
 @app.route("/get_webhook_info", methods=["GET"])
 @app.route("/webhook_info", methods=["GET"])
+@app.route("/api/webhook_info", methods=["GET"])
 def get_webhook_info_route():
     """Melihat status webhook Telegram yang sedang aktif."""
     info = telegram_client.get_webhook_info()
@@ -3773,6 +3780,7 @@ def get_webhook_info_route():
 
 
 @app.route("/delete_webhook", methods=["GET", "POST"])
+@app.route("/api/delete_webhook", methods=["GET", "POST"])
 def delete_webhook_route():
     """Menghapus webhook dari Telegram (agar bisa kembali ke mode run_polling.py lokal)."""
     ok, res = telegram_client.delete_webhook()
