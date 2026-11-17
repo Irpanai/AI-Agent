@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Panel Gudang Tira - AI Warehouse Management</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50: '#F0F9FF', 500: '#0284C7', 600: '#0369A1', 700: '#075985' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #0f172a;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .glass-card {
+      background: rgba(30, 41, 59, 0.7);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+<body class="min-h-screen pb-16">
+
+  <!-- HEADER -->
+  <header class="sticky top-0 z-30 glass-card border-b border-slate-800 px-4 py-3 flex items-center justify-between shadow-lg">
+    <div class="flex items-center space-x-3">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-sky-500/20">
+        <i class="fa-solid fa-boxes-stacked text-lg"></i>
+      </div>
+      <div>
+        <h1 class="font-bold text-base leading-tight flex items-center gap-2">
+          Panel Gudang Tira
+          <span class="text-[10px] bg-sky-500/20 text-sky-400 font-semibold px-2 py-0.5 rounded-full border border-sky-500/30">ADMIN</span>
+        </h1>
+        <p class="text-xs text-slate-400 flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          Terhubung ke Google Sheets
+        </p>
+      </div>
+    </div>
+    <button onclick="loadAllData()" class="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition">
+      <i id="refresh-icon" class="fa-solid fa-rotate text-sm"></i>
+    </button>
+  </header>
+
+  <!-- NAVIGATION TABS -->
+  <div class="px-3 pt-3">
+    <div class="flex space-x-1 p-1 bg-slate-900/80 rounded-xl border border-slate-800 hide-scrollbar overflow-x-auto text-xs font-medium">
+      <button onclick="switchTab('stok')" id="tab-stok" class="tab-btn flex-1 py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition text-white bg-sky-600 shadow">
+        <i class="fa-solid fa-layer-group"></i> Stok
+      </button>
+      <button onclick="switchTab('restok')" id="tab-restok" class="tab-btn flex-1 py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-white">
+        <i class="fa-solid fa-circle-arrow-down"></i> Restok
+      </button>
+      <button onclick="switchTab('tambah')" id="tab-tambah" class="tab-btn flex-1 py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-white">
+        <i class="fa-solid fa-plus"></i> SKU Baru
+      </button>
+      <button onclick="switchTab('opname')" id="tab-opname" class="tab-btn flex-1 py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-white">
+        <i class="fa-solid fa-clipboard-check"></i> Opname
+      </button>
+      <button onclick="switchTab('leaderboard')" id="tab-leaderboard" class="tab-btn flex-1 py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-white">
+        <i class="fa-solid fa-trophy"></i> Seller
+      </button>
+    </div>
+  </div>
+
+  <!-- MAIN CONTAINER -->
+  <main class="p-3">
+
+    <!-- 1. TAB: STOK GUDANG -->
+    <section id="panel-stok" class="space-x-0 space-y-3">
+      <!-- Search Bar -->
+      <div class="relative">
+        <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-3 text-slate-400 text-sm"></i>
+        <input type="text" id="search-input" oninput="filterStock()" placeholder="Cari SKU atau nama produk..." 
+          class="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl pl-9 pr-4 py-2 text-sm text-white placeholder-slate-400 focus:outline-none focus:border-sky-500 transition">
+      </div>
+
+      <!-- Quick Metrics -->
+      <div class="grid grid-cols-3 gap-2 text-center">
+        <div class="glass-card p-2.5 rounded-xl">
+          <span class="text-[10px] text-slate-400 uppercase font-semibold">Total SKU</span>
+          <p id="stat-total-sku" class="text-lg font-bold text-sky-400 mt-0.5">-</p>
+        </div>
+        <div class="glass-card p-2.5 rounded-xl">
+          <span class="text-[10px] text-emerald-400 uppercase font-semibold">Stok Aman</span>
+          <p id="stat-aman" class="text-lg font-bold text-emerald-400 mt-0.5">-</p>
+        </div>
+        <div class="glass-card p-2.5 rounded-xl">
+          <span class="text-[10px] text-amber-400 uppercase font-semibold">Kritis (&lt;10)</span>
+          <p id="stat-kritis" class="text-lg font-bold text-amber-400 mt-0.5">-</p>
+        </div>
+      </div>
+
+      <!-- Stock List -->
+      <div id="stock-list" class="space-y-2">
+        <div class="text-center py-10 text-slate-500">
+          <i class="fa-solid fa-circle-notch fa-spin text-2xl text-sky-500 mb-2"></i>
+          <p class="text-xs">Memuat data stok dari Google Sheets...</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. TAB: RESTOK CEPAT -->
+    <section id="panel-restok" class="hidden">
+      <div class="glass-card p-4 rounded-2xl border border-slate-800">
+        <div class="flex items-center gap-2 mb-4">
+          <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
+            <i class="fa-solid fa-arrow-down"></i>
+          </div>
+          <div>
+            <h2 class="font-bold text-sm">Form Restok Suplai Masuk</h2>
+            <p class="text-xs text-slate-400">Otomatis tambah stok &amp; kirim broadcast ke grup</p>
+          </div>
+        </div>
+
+        <form id="form-restok" onsubmit="submitRestok(event)" class="space-y-3.5">
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1.5">Pilih Produk</label>
+            <select id="restok-sku" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500">
+              <option value="">-- Pilih SKU / Produk --</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1.5">Jumlah Qty Masuk (Pcs)</label>
+            <input type="number" id="restok-qty" required min="1" placeholder="Contoh: 50" 
+              class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500">
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1.5">Nama Admin / PIC</label>
+            <input type="text" id="restok-admin" required value="Admin" placeholder="Nama Anda" 
+              class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500">
+          </div>
+
+          <div class="p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-xl text-xs text-emerald-300 flex items-start gap-2">
+            <i class="fa-solid fa-bullhorn mt-0.5"></i>
+            <span>Saat disimpan, bot Tira akan otomatis menyiarkan notifikasi restok ini ke seluruh grup logistik!</span>
+          </div>
+
+          <button type="submit" id="btn-submit-restok" 
+            class="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 font-semibold text-white rounded-xl shadow-lg shadow-emerald-500/20 text-sm flex items-center justify-center gap-2 transition">
+            <i class="fa-solid fa-floppy-disk"></i> Simpan &amp; Broadcast Restok
+          </button>
+        </form>
+      </div>
+    </section>
+
+    <!-- 3. TAB: TAMBAH MASTER SKU BARU -->
+    <section id="panel-tambah" class="hidden">
+      <div class="glass-card p-4 rounded-2xl border border-slate-800">
+        <div class="flex items-center gap-2 mb-4">
+          <div class="w-8 h-8 rounded-lg bg-sky-500/20 text-sky-400 flex items-center justify-center">
+            <i class="fa-solid fa-folder-plus"></i>
+          </div>
+          <div>
+            <h2 class="font-bold text-sm">Pendaftaran Master SKU Baru</h2>
+            <p class="text-xs text-slate-400">Simpan produk baru ke Master_Barang &amp; Stok</p>
+          </div>
+        </div>
+
+        <form id="form-tambah-sku" onsubmit="submitTambahSKU(event)" class="space-y-3.5">
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1.5">Kode SKU Resmi</label>
+            <input type="text" id="new-sku" required placeholder="Contoh: MHPD 029" 
+              class="w-full uppercase bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500">
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1.5">Nama Standar Produk</label>
+            <input type="text" id="new-nama" required placeholder="Contoh: KOPI HERBAL MANTAP" 
+              class="w-full uppercase bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500">
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1.5">Stok Awal (Pcs)</label>
+            <input type="number" id="new-stok-awal" required min="0" value="0" placeholder="0" 
+              class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500">
+          </div>
+
+          <button type="submit" id="btn-submit-new-sku" 
+            class="w-full py-2.5 bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-600 hover:to-indigo-700 font-semibold text-white rounded-xl shadow-lg shadow-sky-500/20 text-sm flex items-center justify-center gap-2 transition">
+            <i class="fa-solid fa-plus-circle"></i> Daftarkan Produk Resmi
+          </button>
+        </form>
+      </div>
+    </section>
+
+    <!-- 4. TAB: STOCK OPNAME (KOREKSI FISIK) -->
+    <section id="panel-opname" class="hidden">
+      <div class="glass-card p-4 rounded-2xl border border-slate-800">
+        <div class="flex items-center gap-2 mb-4">
+          <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
+            <i class="fa-solid fa-sliders"></i>
+          </div>
+          <div>
+            <h2 class="font-bold text-sm">Koreksi Stock Opname Gudang</h2>
+            <p class="text-xs text-slate-400">Penyesuaian stok fisik (barang rusak / selisih)</p>
+          </div>
+        </div>
+
+        <form id="form-opname" onsubmit="submitOpname(event)" class="space-y-3.5">
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1.5">Pilih Produk</label>
+            <select id="opname-sku" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500">
+              <option value="">-- Pilih SKU / Produk --</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1.5">Jumlah Selisih Penyesuaian (+ / -)</label>
+            <input type="number" id="opname-qty" required placeholder="Contoh: -2 (pecah) atau +5 (lebih)" 
+              class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500">
+            <span class="text-[11px] text-slate-400 block mt-1">Gunakan tanda minus (-) jika berkurang/rusak, angka positif jika fisik lebih banyak.</span>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1.5">Alasan Koreksi / Keterangan</label>
+            <textarea id="opname-alasan" required rows="2" placeholder="Contoh: Barang Pecah saat Muat / Selisih Hitung Mingguan" 
+              class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500"></textarea>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1.5">Nama Petugas Opname</label>
+            <input type="text" id="opname-admin" required value="Admin Gudang" placeholder="Nama Petugas" 
+              class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500">
+          </div>
+
+          <button type="submit" id="btn-submit-opname" 
+            class="w-full py-2.5 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 font-semibold text-white rounded-xl shadow-lg shadow-amber-500/20 text-sm flex items-center justify-center gap-2 transition">
+            <i class="fa-solid fa-check-double"></i> Simpan Penyesuaian Opname
+          </button>
+        </form>
+      </div>
+    </section>
+
+    <!-- 5. TAB: LEADERBOARD SELLER -->
+    <section id="panel-leaderboard" class="hidden space-y-3">
+      <div class="glass-card p-4 rounded-2xl border border-slate-800">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-lg bg-yellow-500/20 text-yellow-400 flex items-center justify-center">
+              <i class="fa-solid fa-trophy"></i>
+            </div>
+            <div>
+              <h2 class="font-bold text-sm">Leaderboard Seller Hari Ini</h2>
+              <p class="text-xs text-slate-400" id="leaderboard-date">Memuat tanggal...</p>
+            </div>
+          </div>
+          <button onclick="loadLeaderboard()" class="text-xs text-sky-400 hover:underline">
+            <i class="fa-solid fa-rotate-right mr-1"></i>Refresh
+          </button>
+        </div>
+
+        <div id="leaderboard-list" class="space-y-2">
+          <div class="text-center py-6 text-slate-500 text-xs">
+            <i class="fa-solid fa-circle-notch fa-spin text-lg text-sky-500 mb-1"></i><br>
+            Memuat statistik seller...
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- TOAST NOTIFICATION -->
+  <div id="toast" class="fixed bottom-4 left-4 right-4 z-50 transform translate-y-24 transition-transform duration-300 flex items-center justify-between p-3.5 rounded-xl shadow-2xl glass-card border border-white/10 text-xs">
+    <div class="flex items-center gap-2.5">
+      <i id="toast-icon" class="fa-solid fa-circle-check text-emerald-400 text-base"></i>
+      <span id="toast-msg" class="font-medium">Notifikasi</span>
+    </div>
+  </div>
+
+  <script>
+    // Init Telegram WebApp
+    if (window.Telegram && window.Telegram.WebApp) {
+      window.Telegram.WebApp.ready();
+      window.Telegram.WebApp.expand();
+    }
+
+    let allProducts = [];
+
+    // Tab Switcher
+    function switchTab(tabName) {
+      const tabs = ['stok', 'restok', 'tambah', 'opname', 'leaderboard'];
+      tabs.forEach(t => {
+        const btn = document.getElementById(`tab-${t}`);
+        const panel = document.getElementById(`panel-${t}`);
+        if (t === tabName) {
+          btn.className = "tab-btn flex-1 py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition text-white bg-sky-600 shadow";
+          panel.classList.remove('hidden');
+        } else {
+          btn.className = "tab-btn flex-1 py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-white";
+          panel.classList.add('hidden');
+        }
+      });
+      if (tabName === 'leaderboard') {
+        loadLeaderboard();
+      }
+    }
+
+    // Show Toast
+    function showToast(msg, isSuccess = true) {
+      const toast = document.getElementById('toast');
+      const toastMsg = document.getElementById('toast-msg');
+      const toastIcon = document.getElementById('toast-icon');
+
+      toastMsg.innerText = msg;
+      if (isSuccess) {
+        toastIcon.className = "fa-solid fa-circle-check text-emerald-400 text-base";
+      } else {
+        toastIcon.className = "fa-solid fa-circle-exclamation text-rose-400 text-base";
+      }
+
+      toast.classList.remove('translate-y-24');
+      setTimeout(() => {
+        toast.classList.add('translate-y-24');
+      }, 3500);
+    }
+
+    // Load Stock Data
+    async function loadAllData() {
+      const icon = document.getElementById('refresh-icon');
+      if (icon) icon.classList.add('fa-spin');
+      try {
+        const res = await fetch('/api/stok');
+        const data = await res.json();
+        if (data.status === 'ok') {
+          allProducts = data.items || [];
+          renderStock(allProducts);
+          populateSelects(allProducts);
+          updateMetrics(allProducts);
+        } else {
+          showToast('Gagal memuat data stok.', false);
+        }
+      } catch (e) {
+        console.error(e);
+        showToast('Error koneksi ke server.', false);
+      } finally {
+        if (icon) icon.classList.remove('fa-spin');
+      }
+    }
+
+    // Render Stock List
+    function renderStock(items) {
+      const container = document.getElementById('stock-list');
+      if (!items || items.length === 0) {
+        container.innerHTML = `<div class="text-center py-8 text-slate-500 text-xs">Tidak ada data produk.</div>`;
+        return;
+      }
+
+      container.innerHTML = items.map(it => {
+        let badgeClass = "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
+        let statusText = "AMAN";
+        if (it.qty === 0) {
+          badgeClass = "bg-rose-500/10 text-rose-400 border-rose-500/20";
+          statusText = "HABIS";
+        } else if (it.qty < 10) {
+          badgeClass = "bg-amber-500/10 text-amber-400 border-amber-500/20";
+          statusText = `KRITIS (${it.qty})`;
+        }
+
+        return `
+          <div class="glass-card p-3 rounded-xl border border-slate-800 flex items-center justify-between hover:border-slate-700 transition">
+            <div class="pr-2">
+              <div class="flex items-center gap-1.5 mb-0.5">
+                <span class="text-[11px] font-mono font-bold text-sky-400 bg-sky-950/60 px-1.5 py-0.5 rounded border border-sky-800/40">${it.sku}</span>
+                <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${badgeClass}">${statusText}</span>
+              </div>
+              <h3 class="font-medium text-xs text-slate-200 line-clamp-1">${it.nama}</h3>
+            </div>
+            <div class="text-right pl-2">
+              <span class="text-base font-bold text-white">${it.qty}</span>
+              <span class="text-[10px] text-slate-400 block -mt-1">pcs</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Update Quick Metrics
+    function updateMetrics(items) {
+      document.getElementById('stat-total-sku').innerText = items.length;
+      const aman = items.filter(i => i.qty >= 10).length;
+      const kritis = items.filter(i => i.qty < 10).length;
+      document.getElementById('stat-aman').innerText = aman;
+      document.getElementById('stat-kritis').innerText = kritis;
+    }
+
+    // Filter Stock Input
+    function filterStock() {
+      const q = document.getElementById('search-input').value.toLowerCase().trim();
+      if (!q) {
+        renderStock(allProducts);
+        return;
+      }
+      const filtered = allProducts.filter(p => p.sku.toLowerCase().includes(q) || p.nama.toLowerCase().includes(q));
+      renderStock(filtered);
+    }
+
+    // Populate Select Dropdowns for Restok and Opname
+    function populateSelects(items) {
+      const restokSelect = document.getElementById('restok-sku');
+      const opnameSelect = document.getElementById('opname-sku');
+
+      const options = items.map(i => `<option value="${i.sku}">[${i.sku}] ${i.nama} (Sisa: ${i.qty})</option>`).join('');
+      restokSelect.innerHTML = `<option value="">-- Pilih Produk --</option>` + options;
+      opnameSelect.innerHTML = `<option value="">-- Pilih Produk --</option>` + options;
+    }
+
+    // Submit Restok Form
+    async function submitRestok(e) {
+      e.preventDefault();
+      const sku = document.getElementById('restok-sku').value;
+      const qty = parseInt(document.getElementById('restok-qty').value);
+      const admin = document.getElementById('restok-admin').value;
+      const btn = document.getElementById('btn-submit-restok');
+
+      if (!sku || isNaN(qty) || qty <= 0) {
+        showToast('Pilih SKU dan kuantitas valid.', false);
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Menyimpan...`;
+
+      try {
+        const res = await fetch('/api/restok', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sku, qty, admin })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          showToast(`Berhasil restok ${sku} +${qty} pcs & disiarkan ke grup!`);
+          document.getElementById('restok-qty').value = '';
+          await loadAllData();
+          switchTab('stok');
+        } else {
+          showToast(data.message || 'Gagal melakukan restok.', false);
+        }
+      } catch (err) {
+        showToast('Koneksi gagal: ' + err, false);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<i class="fa-solid fa-floppy-disk"></i> Simpan &amp; Broadcast Restok`;
+      }
+    }
+
+    // Submit Tambah SKU Form
+    async function submitTambahSKU(e) {
+      e.preventDefault();
+      const sku = document.getElementById('new-sku').value.trim().toUpperCase();
+      const nama = document.getElementById('new-nama').value.trim();
+      const stokAwal = parseInt(document.getElementById('new-stok-awal').value) || 0;
+      const btn = document.getElementById('btn-submit-new-sku');
+
+      if (!sku || !nama) {
+        showToast('SKU dan nama produk harus diisi.', false);
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Mendaftarkan...`;
+
+      try {
+        const res = await fetch('/api/tambah_sku', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sku, nama, stok_awal: stokAwal })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          showToast(`SKU ${sku} berhasil terdaftar di Master!`);
+          document.getElementById('new-sku').value = '';
+          document.getElementById('new-nama').value = '';
+          document.getElementById('new-stok-awal').value = '0';
+          await loadAllData();
+          switchTab('stok');
+        } else {
+          showToast(data.message || 'Gagal tambah SKU.', false);
+        }
+      } catch (err) {
+        showToast('Koneksi gagal: ' + err, false);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<i class="fa-solid fa-plus-circle"></i> Daftarkan Produk Resmi`;
+      }
+    }
+
+    // Submit Stock Opname Form
+    async function submitOpname(e) {
+      e.preventDefault();
+      const sku = document.getElementById('opname-sku').value;
+      const qty = parseInt(document.getElementById('opname-qty').value);
+      const alasan = document.getElementById('opname-alasan').value.trim();
+      const admin = document.getElementById('opname-admin').value.trim();
+      const btn = document.getElementById('btn-submit-opname');
+
+      if (!sku || isNaN(qty) || !alasan) {
+        showToast('Pilih SKU, angka penyesuaian, dan alasan.', false);
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Menyimpan...`;
+
+      try {
+        const res = await fetch('/api/opname', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sku, diff_qty: qty, alasan, admin })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          showToast(`Opname ${sku} (${qty > 0 ? '+' : ''}${qty}) berhasil disimpan!`);
+          document.getElementById('opname-qty').value = '';
+          document.getElementById('opname-alasan').value = '';
+          await loadAllData();
+          switchTab('stok');
+        } else {
+          showToast(data.message || 'Gagal simpan opname.', false);
+        }
+      } catch (err) {
+        showToast('Koneksi gagal: ' + err, false);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<i class="fa-solid fa-check-double"></i> Simpan Penyesuaian Opname`;
+      }
+    }
+
+    // Load Leaderboard
+    async function loadLeaderboard() {
+      const container = document.getElementById('leaderboard-list');
+      container.innerHTML = `<div class="text-center py-6 text-slate-500 text-xs"><i class="fa-solid fa-circle-notch fa-spin text-lg text-sky-500 mb-1"></i><br>Memuat...</div>`;
+      try {
+        const res = await fetch('/api/leaderboard');
+        const data = await res.json();
+        document.getElementById('leaderboard-date').innerText = data.date || 'Hari Ini';
+        const sellers = data.sellers || [];
+        if (sellers.length === 0) {
+          container.innerHTML = `<div class="text-center py-6 text-slate-500 text-xs">Belum ada pengiriman resi hari ini.</div>`;
+          return;
+        }
+
+        const medals = ['🥇', '🥈', '🥉'];
+        container.innerHTML = sellers.map((s, idx) => {
+          const badge = medals[idx] || `<span class="font-bold text-slate-400">${idx+1}.</span>`;
+          return `
+            <div class="glass-card p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+              <div class="flex items-center gap-2.5">
+                <span class="text-base">${badge}</span>
+                <div>
+                  <h4 class="font-semibold text-xs text-slate-200">${s.name}</h4>
+                  <span class="text-[10px] text-slate-400">${s.pcs} pcs barang</span>
+                </div>
+              </div>
+              <div class="text-right">
+                <span class="text-sm font-bold text-sky-400">${s.resi}</span>
+                <span class="text-[10px] text-slate-400 block -mt-1">resi</span>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (e) {
+        container.innerHTML = `<div class="text-center py-4 text-rose-400 text-xs">Gagal memuat leaderboard.</div>`;
+      }
+    }
+
+    // On Load
+    document.addEventListener('DOMContentLoaded', () => {
+      loadAllData();
+    });
+  </script>
+</body>
+</html>
