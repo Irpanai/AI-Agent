@@ -1,5 +1,6 @@
 import os
 import sys
+import urllib.parse
 
 # Tambahkan direktori root proyek ke sys.path agar modul di root dapat diimpor oleh Vercel
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -11,23 +12,29 @@ from app import app
 
 class VercelPathFixMiddleware:
     """
-    WSGI Middleware untuk memulihkan PATH_INFO asli.
-    Saat Vercel melakukan internal rewrite ke /api/index, header 'x-matched-path' atau
-    'REQUEST_URI' menyimpan path asli yang dikunjungi pengguna (misal: /set_webhook).
+    WSGI Middleware untuk memetakan path query Vercel rewrite ke PATH_INFO Flask.
+    Ketika Vercel melakukan rewrite URL /set_webhook -> /api/index?path=set_webhook,
+    middleware ini memulihkan PATH_INFO menjadi '/set_webhook' sehingga routing Flask
+    berjalan 100% akurat.
     """
     def __init__(self, wsgi_app):
         self.wsgi_app = wsgi_app
 
     def __call__(self, environ, start_response):
-        matched_path = (
-            environ.get("HTTP_X_MATCHED_PATH") or
-            environ.get("REQUEST_URI", "").split("?")[0] or
-            environ.get("RAW_URI", "").split("?")[0]
-        )
+        qs = environ.get("QUERY_STRING", "")
+        if qs:
+            parsed = urllib.parse.parse_qs(qs, keep_blank_values=True)
+            if "path" in parsed:
+                path_list = parsed.pop("path")
+                path_val = path_list[0] if path_list else ""
+                if path_val:
+                    if not path_val.startswith("/"):
+                        path_val = "/" + path_val
+                    environ["PATH_INFO"] = path_val
+                else:
+                    environ["PATH_INFO"] = "/"
 
-        current_path = environ.get("PATH_INFO", "")
-        if matched_path and current_path in ["/api/index", "/api", "/api/index.py"]:
-            environ["PATH_INFO"] = matched_path
+                environ["QUERY_STRING"] = urllib.parse.urlencode(parsed, doseq=True)
 
         return self.wsgi_app(environ, start_response)
 
