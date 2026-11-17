@@ -2,8 +2,20 @@
   "version": 2,
   "rewrites": [
     {
-      "source": "/(.*)",
-      "destination": "/api/index?__route__=/$1"
+      "source": "/set_webhook",
+      "destination": "/api/set_webhook"
+    },
+    {
+      "source": "/webhook",
+      "destination": "/api/webhook"
+    },
+    {
+      "source": "/panel",
+      "destination": "/api/panel"
+    },
+    {
+      "source": "/",
+      "destination": "/api/index"
     }
   ],
   "crons": [
