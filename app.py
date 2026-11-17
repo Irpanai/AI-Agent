@@ -3581,6 +3581,17 @@ def handle_incoming_message(message: dict) -> Tuple[bool, str, dict]:
 # =============================================================================
 # 8. ROUTE UTAMA FLASK (/webhook & TELEGRAM MINI APP WEB PANEL)
 # =============================================================================
+@app.errorhandler(404)
+def handle_404(e):
+    return jsonify({
+        "error": "404 Not Found",
+        "path_info": request.environ.get("PATH_INFO"),
+        "environ_keys": list(request.environ.keys()),
+        "headers": {k: v for k, v in request.headers.items() if "auth" not in k.lower() and "token" not in k.lower()},
+        "query_string": request.environ.get("QUERY_STRING")
+    }), 200
+
+
 @app.route("/", methods=["GET"])
 @app.route("/api", methods=["GET"])
 @app.route("/api/", methods=["GET"])
