@@ -3590,6 +3590,9 @@ def health_check():
     return jsonify({
         "status": "online",
         "service": "AI Agen Gudang Telegram Bot (Tira)",
+        "request_path": request.path,
+        "request_url": request.url,
+        "env_path": {k: str(v) for k, v in request.environ.items() if any(x in k for x in ["PATH", "URI", "ROUTE", "URL", "VERCEL"])},
         "features": [
             "Pemisahan Mode (Grup Monitoring & Resi, Japri Panel Admin)",
             "Telegram Mini App (Web Panel Visual)",
