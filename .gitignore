@@ -1,5 +1,22 @@
+# Environment variables & secrets
 .env
-versatile-lotus-470301-q2-adef17ff6ee3.json
-.env
-versatile-lotus-470301-q2-adef17ff6ee3.json
+.env.local
+.env.*.local
 credentials.json
+*-*.json
+!authorized_admins.json
+!active_groups.json
+!vercel.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# IDE & Editor
+.vscode/
+.idea/
+
+# Testing & Scratch
+scratch/

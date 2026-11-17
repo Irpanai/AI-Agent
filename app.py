@@ -22,10 +22,13 @@ import io
 import base64
 import json
 import time
+import shutil
+import tempfile
 import logging
 import threading
 from datetime import datetime, date, timedelta
 from typing import Dict, Any, Optional, Tuple, List
+import gspread
 
 from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
@@ -34,7 +37,6 @@ import pypdf
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
@@ -43,6 +45,13 @@ from google.api_core import exceptions as google_exceptions
 # 1. KONFIGURASI DAN LOGGING
 # =============================================================================
 load_dotenv()
+
+# Deteksi lingkungan Serverless (Vercel / AWS Lambda)
+IS_VERCEL = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Di Vercel, filesystem bersifat read-only kecuali folder temp (/tmp)
+DATA_DIR = tempfile.gettempdir() if IS_VERCEL else BASE_DIR
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,8 +83,19 @@ ADMIN_PHONE_NUMBERS = [
     re.sub(r"\D", "", x) for x in os.getenv("ADMIN_PHONE_NUMBERS", "").split(",") if x.strip()
 ]
 
-ACTIVE_GROUPS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "active_groups.json")
-AUTH_ADMINS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "authorized_admins.json")
+ACTIVE_GROUPS_FILE = os.path.join(DATA_DIR, "active_groups.json")
+AUTH_ADMINS_FILE = os.path.join(DATA_DIR, "authorized_admins.json")
+
+# Inisialisasi awal file JSON di /tmp saat running di Vercel
+if IS_VERCEL:
+    for _fname in ["active_groups.json", "authorized_admins.json"]:
+        _src = os.path.join(BASE_DIR, _fname)
+        _dst = os.path.join(DATA_DIR, _fname)
+        if os.path.exists(_src) and not os.path.exists(_dst):
+            try:
+                shutil.copyfile(_src, _dst)
+            except Exception as _e:
+                logger.warning(f"Gagal menyalin {_fname} ke /tmp: {_e}")
 
 
 def load_authorized_admins() -> dict:
@@ -405,7 +425,11 @@ def get_active_group_ids() -> List[int]:
     return []
 
 
-app = Flask(__name__, template_folder="templates")
+app = Flask(
+    __name__,
+    template_folder=os.path.join(BASE_DIR, "templates"),
+    static_folder=os.path.join(BASE_DIR, "static")
+)
 
 
 # =============================================================================
@@ -721,6 +745,46 @@ class TelegramClient:
                 time.sleep(1.0)
         return None
 
+    def set_webhook(self, webhook_url: str) -> Tuple[bool, dict]:
+        """Mendaftarkan URL webhook ke Telegram."""
+        if not self.token:
+            return False, {"error": "Token Telegram belum dikonfigurasi"}
+        endpoint = f"{self.api_url}/setWebhook"
+        payload = {
+            "url": webhook_url,
+            "allowed_updates": ["message", "callback_query"],
+            "drop_pending_updates": False
+        }
+        try:
+            resp = self.session.post(endpoint, json=payload, timeout=15)
+            data = resp.json()
+            return bool(data.get("ok")), data
+        except Exception as e:
+            return False, {"error": str(e)}
+
+    def get_webhook_info(self) -> dict:
+        """Mengambil informasi status webhook Telegram saat ini."""
+        if not self.token:
+            return {"error": "Token Telegram belum dikonfigurasi"}
+        endpoint = f"{self.api_url}/getWebhookInfo"
+        try:
+            resp = self.session.get(endpoint, timeout=15)
+            return resp.json()
+        except Exception as e:
+            return {"error": str(e)}
+
+    def delete_webhook(self) -> Tuple[bool, dict]:
+        """Menghapus webhook Telegram (berguna jika ingin kembali ke mode polling lokal)."""
+        if not self.token:
+            return False, {"error": "Token Telegram belum dikonfigurasi"}
+        endpoint = f"{self.api_url}/deleteWebhook"
+        try:
+            resp = self.session.post(endpoint, json={}, timeout=15)
+            data = resp.json()
+            return bool(data.get("ok")), data
+        except Exception as e:
+            return False, {"error": str(e)}
+
 
 def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
     """Mengekstrak teks dari file PDF resi."""
@@ -814,12 +878,32 @@ class GoogleSheetsManager:
         self._today_resi_cache_date: str = ""
 
     def _authenticate(self):
-        """Autentikasi Service Account JSON via oauth2client & gspread."""
-        if not os.path.exists(self.creds_path):
-            raise FileNotFoundError(
-                f"File kredensial '{self.creds_path}' tidak ditemukan!"
-            )
-        creds = ServiceAccountCredentials.from_json_keyfile_name(self.creds_path, self.SCOPE)
+        """Autentikasi Service Account JSON via oauth2client & gspread (mendukung file fisik atau ENV var untuk Vercel)."""
+        creds_json_str = (
+            os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+            or os.getenv("GOOGLE_CREDENTIALS_JSON")
+            or ""
+        ).strip()
+
+        if creds_json_str:
+            try:
+                key_dict = json.loads(creds_json_str)
+                creds = ServiceAccountCredentials.from_json_keyfile_dict(key_dict, self.SCOPE)
+            except Exception as e:
+                logger.error(f"Gagal memproses GOOGLE_SERVICE_ACCOUNT_JSON env: {e}")
+                raise ValueError(f"Format JSON pada GOOGLE_SERVICE_ACCOUNT_JSON tidak valid: {e}")
+        else:
+            target_path = self.creds_path
+            if not os.path.isabs(target_path):
+                target_path = os.path.join(BASE_DIR, target_path)
+
+            if not os.path.exists(target_path):
+                raise FileNotFoundError(
+                    f"File kredensial '{self.creds_path}' tidak ditemukan! "
+                    "Jika di-deploy ke Vercel, salin isi file kredensial ke Environment Variable 'GOOGLE_SERVICE_ACCOUNT_JSON'."
+                )
+            creds = ServiceAccountCredentials.from_json_keyfile_name(target_path, self.SCOPE)
+
         self.client = gspread.authorize(creds)
 
         if "http" in self.spreadsheet_target:
@@ -3656,7 +3740,99 @@ def telegram_webhook():
         return jsonify({"status": "error", "message": str(e)}), 200
 
 
-start_background_scheduler()
+# =============================================================================
+# 8. HELPER ROUTES UNTUK VERCEL (WEBHOOK MANAGEMENT & CRON JOBS)
+# =============================================================================
+@app.route("/set_webhook", methods=["GET", "POST"])
+def set_webhook_route():
+    """
+    Helper 1-klik untuk mendaftarkan URL Webhook Telegram setelah deploy ke Vercel.
+    Cukup buka URL ini di browser: https://<domain-vercel>/set_webhook
+    """
+    custom_url = request.args.get("url")
+    if not custom_url:
+        host = request.headers.get("X-Forwarded-Host") or request.host
+        proto = request.headers.get("X-Forwarded-Proto") or "https"
+        custom_url = f"{proto}://{host}/webhook"
+
+    ok, res = telegram_client.set_webhook(custom_url)
+    return jsonify({
+        "status": "ok" if ok else "error",
+        "webhook_url": custom_url,
+        "telegram_response": res,
+        "message": "✅ Webhook Telegram berhasil didaftarkan!" if ok else "❌ Gagal mendaftarkan webhook."
+    }), (200 if ok else 400)
+
+
+@app.route("/get_webhook_info", methods=["GET"])
+@app.route("/webhook_info", methods=["GET"])
+def get_webhook_info_route():
+    """Melihat status webhook Telegram yang sedang aktif."""
+    info = telegram_client.get_webhook_info()
+    return jsonify(info), 200
+
+
+@app.route("/delete_webhook", methods=["GET", "POST"])
+def delete_webhook_route():
+    """Menghapus webhook dari Telegram (agar bisa kembali ke mode run_polling.py lokal)."""
+    ok, res = telegram_client.delete_webhook()
+    return jsonify({
+        "status": "ok" if ok else "error",
+        "telegram_response": res,
+        "message": "✅ Webhook berhasil dihapus. Bot siap untuk polling lokal!" if ok else "❌ Gagal menghapus webhook."
+    }), (200 if ok else 400)
+
+
+@app.route("/api/cron/briefing", methods=["GET", "POST"])
+def cron_morning_briefing():
+    """
+    Vercel Cron endpoint: Otomatis kirim briefing pagi (08:00 WIB / 01:00 UTC) ke grup.
+    Dijalankan secara serverless oleh Vercel Scheduler tanpa perlu server lokal standby.
+    """
+    try:
+        briefing_text = sheets_manager.get_morning_briefing_text()
+        group_ids = get_active_group_ids()
+        sent_count = 0
+        for gid in group_ids:
+            if telegram_client.send_message(gid, briefing_text, parse_mode="HTML"):
+                sent_count += 1
+        return jsonify({
+            "status": "ok",
+            "job": "morning_briefing",
+            "sent_to_groups": sent_count,
+            "total_groups": len(group_ids)
+        }), 200
+    except Exception as e:
+        logger.error(f"Error cron morning briefing: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/cron/recap", methods=["GET", "POST"])
+def cron_evening_recap():
+    """
+    Vercel Cron endpoint: Otomatis kirim rekap sore tutup buku (17:00 WIB / 10:00 UTC) ke grup.
+    """
+    try:
+        recap_text = sheets_manager.get_evening_recap_text()
+        group_ids = get_active_group_ids()
+        sent_count = 0
+        for gid in group_ids:
+            if telegram_client.send_message(gid, recap_text, parse_mode="HTML"):
+                sent_count += 1
+        return jsonify({
+            "status": "ok",
+            "job": "evening_recap",
+            "sent_to_groups": sent_count,
+            "total_groups": len(group_ids)
+        }), 200
+    except Exception as e:
+        logger.error(f"Error cron evening recap: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# Pada serverless (Vercel), background scheduler thread tidak dijalankan karena digantikan oleh Vercel Crons
+if not IS_VERCEL:
+    start_background_scheduler()
 
 
 # =============================================================================

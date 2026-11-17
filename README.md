@@ -58,7 +58,41 @@ Backend service cerdas berbasis **Python (Flask)**, **Google Sheets (`gspread`)*
 ---
 
 ## 🚀 Cara Menjalankan
+
+### A. Menjalankan di Komputer Lokal (Mode Polling Cepat)
 ```powershell
 python run_polling.py
 ```
-*(Bot berjalan dan merespons otomatis seluruh tombol dan pesan di Telegram)*.
+*(Bot berjalan dan merespons otomatis seluruh tombol dan pesan di Telegram tanpa perlu setup domain/webhook)*.
+
+---
+
+### B. Deployment ke Vercel (Mode Serverless Webhook 24/7)
+
+Proyek ini telah dikonfigurasi penuh untuk deployment **Vercel Serverless Function** menggunakan file [`vercel.json`](file:///d:/AI%20Agent/vercel.json) dan entrypoint [`api/index.py`](file:///d:/AI%20Agent/api/index.py).
+
+#### Langkah-Langkah Deploy:
+1. **Push ke GitHub:**
+   Pastikan kode telah di-commit dan di-push ke repository GitHub Anda (file rahasia `.env` dan `credentials.json` sudah otomatis dilindungi oleh `.gitignore`).
+2. **Import ke Vercel:**
+   - Masuk ke dashboard [vercel.com](https://vercel.com/) -> klik **Add New Project** -> pilih repositori GitHub Anda.
+   - Framework Preset: **Other** (Vercel akan otomatis mendeteksi konfigurasi `vercel.json` dan folder `api/`).
+3. **Isi Environment Variables di Vercel Dashboard:**
+   Pada bagian **Environment Variables**, tambahkan:
+   - `TELEGRAM_TOKEN` : Token bot Telegram dari @BotFather.
+   - `GEMINI_API_KEY` : API key Gemini AI.
+   - `SPREADSHEET_ID_OR_URL` : URL atau ID Google Spreadsheet gudang.
+   - `GOOGLE_SERVICE_ACCOUNT_JSON` : **(Penting)** Buka file `credentials.json` di komputer Anda, copy **seluruh isi teks JSON-nya**, lalu paste di sini sebagai nilainya.
+   - `SUPERADMIN_TELEGRAM_IDS` : ID Telegram Owner (contoh: `8979934843`).
+   - `ADMIN_TELEGRAM_IDS` : ID Telegram Admin (contoh: `7957273991`).
+   - `ADMIN_PIN` : PIN akses admin (contoh: `1234`).
+   - `WEB_APP_URL` : `https://<domain-anda>.vercel.app/panel`
+4. **Klik Deploy:** Tunggu proses build selesai hingga Vercel memberikan domain HTTPS publik (misal: `https://mh-gudang.vercel.app`).
+5. **Daftarkan Webhook Telegram (1-Klik):**
+   Setelah deployment selesai, buka browser Anda dan kunjungi URL berikut:
+   ```text
+   https://<domain-anda>.vercel.app/set_webhook
+   ```
+   Telegram akan langsung membalas: `{"status": "ok", "message": "✅ Webhook Telegram berhasil didaftarkan!"}`.
+6. **Otomatisasi Cron Jobs Vercel:**
+   Jadwal **Auto-Briefing Pagi (08:00 WIB)** dan **Rekap Tutup Buku Sore (17:00 WIB)** otomatis di-trigger oleh Vercel Crons tanpa memakan kuota server standby.
