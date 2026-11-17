@@ -12,32 +12,53 @@ from app import app
 
 class VercelPathFixMiddleware:
     """
-    WSGI Middleware untuk memetakan path query Vercel rewrite ke PATH_INFO Flask.
-    Ketika Vercel melakukan rewrite URL /set_webhook -> /api/index?path=set_webhook,
-    middleware ini memulihkan PATH_INFO menjadi '/set_webhook' sehingga routing Flask
-    berjalan 100% akurat.
+    WSGI Middleware untuk memetakan path request Vercel rewrite ke PATH_INFO Flask.
+    Di Vercel Serverless Python, URL asli yang dikunjungi user dikirimkan via header
+    X-Matched-Path (HTTP_X_MATCHED_PATH) oleh reverse proxy Vercel.
     """
     def __init__(self, wsgi_app):
         self.wsgi_app = wsgi_app
 
     def __call__(self, environ, start_response):
+        # 1. Cek header Vercel untuk URL / path asli yang diminta user
+        matched_path = (
+            environ.get("HTTP_X_MATCHED_PATH")
+            or environ.get("HTTP_X_VERCEL_MATCHED_PATH")
+            or environ.get("HTTP_X_NOW_ROUTE_MATCHES")
+            or environ.get("HTTP_X_FORWARDED_URI")
+            or environ.get("REQUEST_URI")
+            or environ.get("RAW_URI")
+        )
+
+        # 2. Cek query parameter 'path' sebagai fallback
         qs = environ.get("QUERY_STRING", "")
-        if qs:
+        if not matched_path and qs:
             parsed = urllib.parse.parse_qs(qs, keep_blank_values=True)
             if "path" in parsed:
-                path_list = parsed.pop("path")
-                path_val = path_list[0] if path_list else ""
-                if path_val:
-                    if not path_val.startswith("/"):
-                        path_val = "/" + path_val
-                    environ["PATH_INFO"] = path_val
-                else:
-                    environ["PATH_INFO"] = "/"
+                p = parsed.get("path")
+                if p and p[0]:
+                    matched_path = p[0]
 
-                environ["QUERY_STRING"] = urllib.parse.urlencode(parsed, doseq=True)
+        if matched_path:
+            # Pisahkan query string jika terselip di dalam matched_path
+            if "?" in matched_path:
+                clean_path, extracted_qs = matched_path.split("?", 1)
+                if not environ.get("QUERY_STRING"):
+                    environ["QUERY_STRING"] = extracted_qs
+            else:
+                clean_path = matched_path
+
+            if not clean_path.startswith("/"):
+                clean_path = "/" + clean_path
+
+            # Jika path menunjuk ke file handler /api/index, itu adalah akses ke root '/'
+            if clean_path in ("/api/index", "/api/index.py"):
+                clean_path = "/"
+
+            environ["PATH_INFO"] = clean_path
 
         return self.wsgi_app(environ, start_response)
 
 
-# Pasang middleware ke objek Flask
+# Pasang middleware ke objek WSGI Flask
 app.wsgi_app = VercelPathFixMiddleware(app.wsgi_app)

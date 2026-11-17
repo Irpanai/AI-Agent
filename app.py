@@ -3584,7 +3584,6 @@ def handle_incoming_message(message: dict) -> Tuple[bool, str, dict]:
 @app.route("/", methods=["GET"])
 @app.route("/api", methods=["GET"])
 @app.route("/api/", methods=["GET"])
-@app.route("/api/index", methods=["GET"])
 def health_check():
     """Endpoint untuk verifikasi server berjalan."""
     return jsonify({
@@ -3601,7 +3600,9 @@ def health_check():
             "Ekspor Laporan Excel (.xlsx)"
         ],
         "web_panel": f"{WEB_APP_URL}",
-        "timestamp": time.time()
+        "timestamp": time.time(),
+        "matched_path": request.environ.get("HTTP_X_MATCHED_PATH", ""),
+        "path_info": request.environ.get("PATH_INFO", "")
     }), 200
 
 
