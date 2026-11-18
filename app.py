@@ -26,7 +26,7 @@ import shutil
 import tempfile
 import logging
 import threading
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Dict, Any, Optional, Tuple, List
 import gspread
 
@@ -1319,14 +1319,15 @@ class GoogleSheetsManager:
                     except ValueError:
                         pass
 
-            now = datetime.now()
-            tgl_display = now.strftime("%d %B %Y")
+            now_wita = datetime.now(timezone(timedelta(hours=8)))
+            tgl_display = now_wita.strftime("%d %B %Y")
 
             msg_lines = [
-                "☀️ <b>SELAMAT PAGI TIM GUDANG &amp; SELLER!</b> 👋",
+                "☀️ <b>OPERASIONAL GUDANG RESMI DIBUKA!</b> 👋",
                 "━━━━━━━━━━━━━━━━━━━━━━",
-                f"📅 <i>{tgl_display} | Jam 08:00 WIB</i>",
-                "Stok awal siap diproses untuk aktivitas hari ini.\n"
+                "⏰ <i>Jam Operasional: 08:00 WITA (07:00 WIB)</i>",
+                f"📅 <i>{tgl_display}</i>\n",
+                "Halo Rekan Seller & Tim Logistik! Seluruh pesanan, pencatatan resi, dan packing barang hari ini siap diproses.\n"
             ]
 
             if low_stock_items:
@@ -1378,13 +1379,13 @@ class GoogleSheetsManager:
                                 detail_keluar[sku] = {"nama": nama, "qty": 0}
                             detail_keluar[sku]["qty"] += qty
 
-            now = datetime.now()
-            tgl_display = now.strftime("%d %B %Y")
+            now_wita = datetime.now(timezone(timedelta(hours=8)))
+            tgl_display = now_wita.strftime("%d %B %Y")
 
             msg_lines = [
-                "🏁 <b>TUTUP BUKU OPERASIONAL GUDANG (17:00 WIB)</b>",
+                "🏁 <b>OPERASIONAL GUDANG DITUTUP (18:00 WITA / 17:00 WIB)</b>",
                 "━━━━━━━━━━━━━━━━━━━━━━",
-                f"📅 <i>Rekap Harian: {tgl_display}</i>\n",
+                f"📅 <i>Rekapitulasi Harian: {tgl_display}</i>\n",
                 f"🔻 <b>TOTAL PAKET / BARANG KELUAR HARI INI: {total_keluar} pcs</b>",
                 f"📋 <b>Total Transaksi Resi / Order: {total_transaksi} kali</b>\n"
             ]
@@ -1398,7 +1399,10 @@ class GoogleSheetsManager:
                 msg_lines.append("<i>(Tidak ada mutasi barang keluar yang tercatat hari ini)</i>")
 
             msg_lines.append("\n━━━━━━━━━━━━━━━━━━━━━━")
-            msg_lines.append("🙏 <i>Terima kasih atas dedikasi dan kerja keras seluruh tim hari ini!</i>")
+            msg_lines.append("📌 <b>Informasi Jam Operasional:</b>")
+            msg_lines.append("• Layanan packing & input resi hari ini telah <b>resmi selesai</b>.")
+            msg_lines.append("• Resi atau orderan yang masuk setelah jam 18:00 WITA (17:00 WIB) tetap dicatat otomatis oleh bot, dan dijadwalkan dipacking pada kloter pertama besok pagi mulai pukul 08:00 WITA.")
+            msg_lines.append("\n🙏 <i>Terima kasih atas dedikasi dan kerja keras seluruh seller & tim logistik hari ini! 🚀</i>")
             return "\n".join(msg_lines)
 
         return self._execute_with_retry(_recap)
@@ -2214,16 +2218,16 @@ _scheduler_lock = threading.Lock()
 
 
 def run_scheduler_loop():
-    logger.info("Background Scheduler Auto-Briefing (08:00 WIB) & Rekap Sore (17:00 WIB) telah aktif.")
+    logger.info("Background Scheduler Auto-Briefing (08:00 WITA) & Rekap Sore (18:00 WITA) telah aktif.")
     last_morning_date = ""
     last_evening_date = ""
 
     while True:
         try:
-            now = datetime.now()
-            today_str = now.strftime("%Y-%m-%d")
-            hour = now.hour
-            minute = now.minute
+            now_wita = datetime.now(timezone(timedelta(hours=8)))
+            today_str = now_wita.strftime("%Y-%m-%d")
+            hour = now_wita.hour
+            minute = now_wita.minute
 
             if hour == 8 and minute == 0 and last_morning_date != today_str:
                 active_group_ids = get_active_group_ids()
@@ -2235,7 +2239,7 @@ def run_scheduler_loop():
                         time.sleep(1)
                 last_morning_date = today_str
 
-            if hour == 17 and minute == 0 and last_evening_date != today_str:
+            if hour == 18 and minute == 0 and last_evening_date != today_str:
                 active_group_ids = get_active_group_ids()
                 if active_group_ids:
                     logger.info(f"Memicu Rekap Sore Tutup Buku ke {len(active_group_ids)} grup...")
@@ -3768,6 +3772,10 @@ def handle_incoming_message(message: dict) -> Tuple[bool, str, dict]:
     lines.append("━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("✅ <i>Stok seluruh produk berhasil dipotong &amp; dicatat di Riwayat Mutasi!</i>")
 
+    now_wita = datetime.now(timezone(timedelta(hours=8)))
+    if now_wita.hour >= 18 or now_wita.hour < 8:
+        lines.append("🌙 <i>Catatan: Resi diterima di luar jam operasional (tutup 18:00 WITA). Paket dijadwalkan dipacking pada kloter pagi besok (mulai 08:00 WITA / 07:00 WIB).</i>")
+
     telegram_msg = "\n".join(lines)
     telegram_client.send_message(chat_id, telegram_msg, reply_to_message_id=message_id, parse_mode="HTML")
     return True, "multi_item_outflow", {"items": processed_items, "no_resi": final_no_resi}
@@ -3991,7 +3999,7 @@ def delete_webhook_route():
 @app.route("/api/cron/briefing", methods=["GET", "POST"])
 def cron_morning_briefing():
     """
-    Vercel Cron endpoint: Otomatis kirim briefing pagi (08:00 WIB / 01:00 UTC) ke grup.
+    Vercel Cron endpoint: Otomatis kirim briefing pagi (08:00 WITA / 07:00 WIB / 00:00 UTC) ke grup.
     Dijalankan secara serverless oleh Vercel Scheduler tanpa perlu server lokal standby.
     """
     try:
@@ -4015,7 +4023,7 @@ def cron_morning_briefing():
 @app.route("/api/cron/recap", methods=["GET", "POST"])
 def cron_evening_recap():
     """
-    Vercel Cron endpoint: Otomatis kirim rekap sore tutup buku (17:00 WIB / 10:00 UTC) ke grup.
+    Vercel Cron endpoint: Otomatis kirim rekap sore tutup operasional (18:00 WITA / 17:00 WIB / 10:00 UTC) ke grup.
     """
     try:
         recap_text = sheets_manager.get_evening_recap_text()
