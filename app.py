@@ -537,6 +537,106 @@ def extract_no_resi_from_text(text: str) -> Optional[str]:
     return None
 
 
+def detect_shipping_service(text: str, default: str = "REGULER") -> Tuple[str, str]:
+    """
+    Mendeteksi klasifikasi jenis layanan pengiriman (INSTANT, SAMEDAY, NEXT DAY, KARGO, HEMAT, REGULER)
+    dan nama kurir dari teks orderan atau label resi.
+    Mengembalikan tuple: (layanan, kurir).
+    """
+    if not text:
+        return default, ""
+
+    txt = text.lower()
+
+    # 1. Deteksi Kurir / Ekspedisi
+    kurir = ""
+    if re.search(r'\b(gosend|go-send|gojek)\b', txt):
+        kurir = "GoSend"
+    elif re.search(r'\b(grabexpress|grab-express|grab)\b', txt):
+        kurir = "GrabExpress"
+    elif re.search(r'\b(spx|shopee\s*xpress|shopee\s*express)\b', txt):
+        kurir = "SPX Express"
+    elif re.search(r'\b(j&t|jnt|jet\s*express)\b', txt):
+        kurir = "J&T Express"
+    elif re.search(r'\b(sicepat|si\s*cepat)\b', txt):
+        kurir = "SiCepat"
+    elif re.search(r'\b(jne)\b', txt):
+        kurir = "JNE"
+    elif re.search(r'\b(anteraja|anter\s*aja)\b', txt):
+        kurir = "Anteraja"
+    elif re.search(r'\b(paxel)\b', txt):
+        kurir = "Paxel"
+    elif re.search(r'\b(lalamove)\b', txt):
+        kurir = "Lalamove"
+    elif re.search(r'\b(maxim)\b', txt):
+        kurir = "Maxim"
+    elif re.search(r'\b(ninja\s*xpress|ninjaxpress|ninja)\b', txt):
+        kurir = "Ninja Xpress"
+    elif re.search(r'\b(lion\s*parcel|lion)\b', txt):
+        kurir = "Lion Parcel"
+    elif re.search(r'\b(pos\s*indonesia|pos\s*kilat|kantor\s*pos)\b', txt):
+        kurir = "Pos Indonesia"
+    elif re.search(r'\b(wahana)\b', txt):
+        kurir = "Wahana"
+
+    # 2. Deteksi Layanan Pengiriman (Urutan prioritas: SAMEDAY -> INSTANT -> NEXT DAY -> KARGO -> HEMAT -> REGULER)
+    if re.search(r'\b(sameday|same\s*day|same-day|paxel\s*sameday)\b', txt):
+        return "SAMEDAY", kurir or "Sameday Courier"
+
+    if re.search(r'\b(instant|instan|gosend|grabexpress|grab-express|lalamove|maxim|borzo)\b', txt):
+        return "INSTANT", kurir or ("GoSend" if "gosend" in txt else "Instant Courier")
+
+    if re.search(r'\b(next\s*day|nextday|yes|ons|best|esok\s*sampai)\b', txt):
+        return "NEXT DAY", kurir or "Next Day"
+
+    if re.search(r'\b(kargo|cargo|jtr|trucking|gokil|sentral\s*cargo|dakota|indah\s*cargo)\b', txt):
+        return "KARGO", kurir or "Kargo"
+
+    if re.search(r'\b(hemat|economy|ekonomi|halu|eco)\b', txt):
+        return "HEMAT", kurir or "Hemat"
+
+    if re.search(r'\b(reguler|regular|reg|standar|standard|ez|siuntung)\b', txt):
+        return "REGULER", kurir or "Reguler"
+
+    return default, kurir
+
+
+def format_shipping_badge(layanan: str, kurir: str = "") -> str:
+    """Mengembalikan badge visual dan peringatan prioritas penanganan paket gudang."""
+    layanan_clean = (layanan or "REGULER").upper().strip()
+    kurir_suffix = f" ({kurir})" if kurir and kurir.upper() not in layanan_clean else ""
+
+    if layanan_clean == "INSTANT":
+        return (
+            f"🚨 <b>PRIORITAS PENGIRIMAN: INSTANT ⚡{kurir_suffix}</b>\n"
+            f"⚠️ <i>Driver kurir segera tiba / pickup! Harap langsung dipacking prioritas utama.</i>\n"
+        )
+    elif layanan_clean == "SAMEDAY":
+        return (
+            f"🕒 <b>PRIORITAS PENGIRIMAN: SAMEDAY ⚡{kurir_suffix}</b>\n"
+            f"⚠️ <i>Paket harus selesai dipacking & pickup hari ini.</i>\n"
+        )
+    elif layanan_clean == "NEXT DAY":
+        return f"🚀 <b>PRIORITAS PENGIRIMAN: NEXT DAY (ESOK SAMPAI){kurir_suffix}</b>\n"
+    elif layanan_clean == "KARGO":
+        return f"🚛 <b>Layanan Pengiriman: KARGO / TRUCKING{kurir_suffix}</b>\n"
+    elif layanan_clean == "HEMAT":
+        return f"🏷️ <b>Layanan Pengiriman: HEMAT / EKONOMI{kurir_suffix}</b>\n"
+    else:
+        return f"🚚 <b>Layanan Pengiriman: REGULER{kurir_suffix}</b>\n"
+
+
+def parse_shipping_service_from_keterangan(ket: str) -> str:
+    """Mengekstrak jenis layanan pengiriman dari teks keterangan mutasi."""
+    if not ket:
+        return "REGULER"
+    m = re.search(r'\[(INSTANT|SAMEDAY|NEXT DAY|KARGO|HEMAT|REGULER)\]', ket, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    layanan, _ = detect_shipping_service(ket, default="REGULER")
+    return layanan
+
+
 # =============================================================================
 # 3. HELPER: TELEGRAM BOT API INTERACTION
 # =============================================================================
@@ -1359,6 +1459,14 @@ class GoogleSheetsManager:
             total_keluar = 0
             detail_keluar: Dict[str, Dict[str, Any]] = {}
             total_transaksi = 0
+            shipping_counts = {
+                "INSTANT": 0,
+                "SAMEDAY": 0,
+                "NEXT DAY": 0,
+                "REGULER": 0,
+                "HEMAT": 0,
+                "KARGO": 0
+            }
 
             for row in mutasi_records[1:]:
                 if len(row) >= 6:
@@ -1379,6 +1487,10 @@ class GoogleSheetsManager:
                                 detail_keluar[sku] = {"nama": nama, "qty": 0}
                             detail_keluar[sku]["qty"] += qty
 
+                            ket = row[8].strip() if len(row) > 8 else ""
+                            svc = parse_shipping_service_from_keterangan(ket)
+                            shipping_counts[svc] = shipping_counts.get(svc, 0) + 1
+
             now_wita = datetime.now(timezone(timedelta(hours=8)))
             tgl_display = now_wita.strftime("%d %B %Y")
 
@@ -1389,6 +1501,26 @@ class GoogleSheetsManager:
                 f"🔻 <b>TOTAL PAKET / BARANG KELUAR HARI INI: {total_keluar} pcs</b>",
                 f"📋 <b>Total Transaksi Resi / Order: {total_transaksi} kali</b>\n"
             ]
+
+            # Rincian Layanan Pengiriman
+            svc_lines = []
+            if shipping_counts.get("INSTANT", 0) > 0:
+                svc_lines.append(f"• ⚡ <b>Instant:</b> {shipping_counts['INSTANT']} paket")
+            if shipping_counts.get("SAMEDAY", 0) > 0:
+                svc_lines.append(f"• 🕒 <b>Sameday:</b> {shipping_counts['SAMEDAY']} paket")
+            if shipping_counts.get("NEXT DAY", 0) > 0:
+                svc_lines.append(f"• 🚀 <b>Next Day:</b> {shipping_counts['NEXT DAY']} paket")
+            if shipping_counts.get("REGULER", 0) > 0:
+                svc_lines.append(f"• 🚚 <b>Reguler:</b> {shipping_counts['REGULER']} paket")
+            if shipping_counts.get("HEMAT", 0) > 0:
+                svc_lines.append(f"• 🏷️ <b>Hemat:</b> {shipping_counts['HEMAT']} paket")
+            if shipping_counts.get("KARGO", 0) > 0:
+                svc_lines.append(f"• 🚛 <b>Kargo:</b> {shipping_counts['KARGO']} paket")
+
+            if svc_lines:
+                msg_lines.append("🚚 <b>Rincian Layanan Pengiriman:</b>")
+                msg_lines.extend(svc_lines)
+                msg_lines.append("")
 
             if detail_keluar:
                 msg_lines.append("<b>Rincian Pengiriman Barang Hari Ini:</b>")
@@ -1421,6 +1553,14 @@ class GoogleSheetsManager:
                 return "Belum ada catatan transaksi di Riwayat_Mutasi."
 
             seller_stats = {}
+            shipping_counts = {
+                "INSTANT": 0,
+                "SAMEDAY": 0,
+                "NEXT DAY": 0,
+                "REGULER": 0,
+                "HEMAT": 0,
+                "KARGO": 0
+            }
             for row in records[1:]:
                 if len(row) >= 8:
                     row_tgl = row[1].strip()
@@ -1436,6 +1576,9 @@ class GoogleSheetsManager:
                             ket = row[8].strip() if len(row) > 8 else ""
                             m_resi = re.search(r'Resi:\s*\[?([A-Za-z0-9_-]+)\]?', ket)
                             resi_key = m_resi.group(1) if m_resi else f"order_{row[0]}"
+
+                            svc = parse_shipping_service_from_keterangan(ket)
+                            shipping_counts[svc] = shipping_counts.get(svc, 0) + 1
 
                             sku = row[3].strip().upper() if len(row) > 3 else ""
                             nama = row[4].strip() if len(row) > 4 else sku
@@ -1481,8 +1624,24 @@ class GoogleSheetsManager:
                     item_parts = [f"{nama} (<b>{qty}</b>)" for (sku, nama), qty in sorted_items]
                     lines.append(f"   └ 📦 <i>{', '.join(item_parts)}</i>")
 
+            svc_summary = []
+            if shipping_counts.get("INSTANT", 0) > 0:
+                svc_summary.append(f"⚡ Instant ({shipping_counts['INSTANT']})")
+            if shipping_counts.get("SAMEDAY", 0) > 0:
+                svc_summary.append(f"🕒 Sameday ({shipping_counts['SAMEDAY']})")
+            if shipping_counts.get("NEXT DAY", 0) > 0:
+                svc_summary.append(f"🚀 Next Day ({shipping_counts['NEXT DAY']})")
+            if shipping_counts.get("REGULER", 0) > 0:
+                svc_summary.append(f"🚚 Reguler ({shipping_counts['REGULER']})")
+            if shipping_counts.get("HEMAT", 0) > 0:
+                svc_summary.append(f"🏷️ Hemat ({shipping_counts['HEMAT']})")
+            if shipping_counts.get("KARGO", 0) > 0:
+                svc_summary.append(f"🚛 Kargo ({shipping_counts['KARGO']})")
+
             lines.append("\n━━━━━━━━━━━━━━━━━━━━━━")
             lines.append(f"🔥 <b>Total Hari Ini:</b> {total_semua_resi} resi ({total_semua_pcs} pcs terkirim).")
+            if svc_summary:
+                lines.append(f"🚚 <b>Layanan:</b> {', '.join(svc_summary)}")
             lines.append("💡 <i>Ketik <code>/seller &lt;nama&gt;</code> untuk rincian detail resi & barang per seller.</i>")
             return "\n".join(lines)
 
@@ -1622,6 +1781,14 @@ class GoogleSheetsManager:
                 return {"status": "ok", "date": datetime.now().strftime("%d %B %Y"), "sellers": []}
 
             seller_stats = {}
+            shipping_stats = {
+                "INSTANT": 0,
+                "SAMEDAY": 0,
+                "NEXT DAY": 0,
+                "REGULER": 0,
+                "HEMAT": 0,
+                "KARGO": 0
+            }
             for row in records[1:]:
                 if len(row) >= 8:
                     row_tgl = row[1].strip()
@@ -1637,6 +1804,9 @@ class GoogleSheetsManager:
                             ket = row[8].strip() if len(row) > 8 else ""
                             m_resi = re.search(r'Resi:\s*\[?([A-Za-z0-9_-]+)\]?', ket)
                             resi_key = m_resi.group(1) if m_resi else f"order_{row[0]}"
+
+                            svc = parse_shipping_service_from_keterangan(ket)
+                            shipping_stats[svc] = shipping_stats.get(svc, 0) + 1
 
                             sku = row[3].strip().upper() if len(row) > 3 else ""
                             nama = row[4].strip() if len(row) > 4 else sku
@@ -1674,7 +1844,8 @@ class GoogleSheetsManager:
             return {
                 "status": "ok",
                 "date": datetime.now().strftime("%d %B %Y"),
-                "sellers": result_sellers
+                "sellers": result_sellers,
+                "shipping_stats": shipping_stats
             }
 
         return self._execute_with_retry(_get)
@@ -1912,6 +2083,14 @@ class GoogleSheetsManager:
             total_masuk = 0
             detail_keluar: Dict[str, Dict[str, Any]] = {}
             detail_masuk: Dict[str, Dict[str, Any]] = {}
+            shipping_counts = {
+                "INSTANT": 0,
+                "SAMEDAY": 0,
+                "NEXT DAY": 0,
+                "REGULER": 0,
+                "HEMAT": 0,
+                "KARGO": 0
+            }
 
             for row in mutasi_records[1:]:
                 if len(row) >= 6:
@@ -1930,6 +2109,10 @@ class GoogleSheetsManager:
                             if sku not in detail_keluar:
                                 detail_keluar[sku] = {"nama": nama, "qty": 0}
                             detail_keluar[sku]["qty"] += qty
+
+                            ket = row[8].strip() if len(row) > 8 else ""
+                            svc = parse_shipping_service_from_keterangan(ket)
+                            shipping_counts[svc] = shipping_counts.get(svc, 0) + 1
                         elif tipe in ["MASUK", "OPNAME"]:
                             total_masuk += qty
                             if sku not in detail_masuk:
@@ -1960,6 +2143,26 @@ class GoogleSheetsManager:
                 "━━━━━━━━━━━━━━━━━━━━━━",
                 f"🔻 <b>TOTAL BARANG KELUAR: {total_keluar} pcs</b>"
             ]
+
+            # Rincian Layanan Pengiriman
+            svc_lines = []
+            if shipping_counts.get("INSTANT", 0) > 0:
+                svc_lines.append(f"  • ⚡ Instant: <b>{shipping_counts['INSTANT']} paket</b>")
+            if shipping_counts.get("SAMEDAY", 0) > 0:
+                svc_lines.append(f"  • 🕒 Sameday: <b>{shipping_counts['SAMEDAY']} paket</b>")
+            if shipping_counts.get("NEXT DAY", 0) > 0:
+                svc_lines.append(f"  • 🚀 Next Day: <b>{shipping_counts['NEXT DAY']} paket</b>")
+            if shipping_counts.get("REGULER", 0) > 0:
+                svc_lines.append(f"  • 🚚 Reguler: <b>{shipping_counts['REGULER']} paket</b>")
+            if shipping_counts.get("HEMAT", 0) > 0:
+                svc_lines.append(f"  • 🏷️ Hemat: <b>{shipping_counts['HEMAT']} paket</b>")
+            if shipping_counts.get("KARGO", 0) > 0:
+                svc_lines.append(f"  • 🚛 Kargo: <b>{shipping_counts['KARGO']} paket</b>")
+
+            if svc_lines:
+                report_lines.append("🚚 <b>Layanan Pengiriman:</b>")
+                report_lines.extend(svc_lines)
+                report_lines.append("")
 
             if detail_keluar:
                 for sku, data in detail_keluar.items():
@@ -2084,14 +2287,18 @@ class GeminiNormalizer:
             "- 1 box / kotak umum = 10 pcs\n"
             "- 1 dus / karton = 24 pcs\n"
             "- Satuan botol, kapsul, tube, sachet, pcs, buah, pack = dihitung per satuan (1 unit = 1 pcs)\n\n"
-            "ATURAN EKSTRAKSI RESI & MULTI-ITEM:\n"
-            "1. Ekstrak 'no_resi' dari teks/dokumen resi jika ada (misal nomor resi Anteraja, SPX, J&T, dsb). Jika tidak ada resi, isi string kosong \"\".\n"
-            "2. Ekstrak SEMUA barang dalam pesanan ke dalam list 'items'. Jika pesanan berisi lebih dari 1 macam barang (orderan campuran/bundle), masukkan seluruh barang ke dalam array 'items'.\n"
-            "3. Cocokkan setiap barang ke SKU terdekat di Master SKU. Jika barang tidak ada di Master SKU, set 'kode_sku': 'UNKNOWN' dan 'nama_standar': 'UNKNOWN'.\n"
-            "4. Nilai 'qty' HARUS bertipe integer dalam satuan PCS setelah dikonversi kemasannya.\n"
-            "5. Format output HARUS JSON valid dengan struktur persis seperti ini:\n"
+            "ATURAN EKSTRAKSI RESI, KURIR & MULTI-ITEM:\n"
+            "1. Ekstrak 'no_resi' dari teks/dokumen resi jika ada (misal nomor resi Anteraja, SPX, J&T, SiCepat, JNE, dsb). Jika tidak ada resi, isi string kosong \"\".\n"
+            "2. Ekstrak 'kurir' (nama ekspedisi/kurir, contoh: 'SPX', 'J&T', 'SiCepat', 'JNE', 'GoSend', 'GrabExpress', 'Anteraja', 'Paxel', 'Lion Parcel', dsb). Jika tidak terdeteksi, isi \"\".\n"
+            "3. Ekstrak 'layanan_pengiriman': klasifikasikan jenis layanan pengiriman ke salah satu nilai persis ini: 'INSTANT', 'SAMEDAY', 'NEXT DAY', 'KARGO', 'HEMAT', 'REGULER'. Jika tidak tertera atau standar, isi 'REGULER'.\n"
+            "4. Ekstrak SEMUA barang dalam pesanan ke dalam list 'items'. Jika pesanan berisi lebih dari 1 macam barang (orderan campuran/bundle), masukkan seluruh barang ke dalam array 'items'.\n"
+            "5. Cocokkan setiap barang ke SKU terdekat di Master SKU. Jika barang tidak ada di Master SKU, set 'kode_sku': 'UNKNOWN' dan 'nama_standar': 'UNKNOWN'.\n"
+            "6. Nilai 'qty' HARUS bertipe integer dalam satuan PCS setelah dikonversi kemasannya.\n"
+            "7. Format output HARUS JSON valid dengan struktur persis seperti ini:\n"
             "{\n"
             "  \"no_resi\": \"11004683469987\",\n"
+            "  \"kurir\": \"SPX\",\n"
+            "  \"layanan_pengiriman\": \"REGULER\",\n"
             "  \"items\": [\n"
             "    {\n"
             "      \"kode_sku\": \"MHPD 021\",\n"
@@ -3605,6 +3812,10 @@ def handle_incoming_message(message: dict) -> Tuple[bool, str, dict]:
             matched_sku, qty_keluar, action="KELUAR"
         )
 
+        layanan, kurir = detect_shipping_service(pesan_seller)
+        badge = format_shipping_badge(layanan, kurir)
+        kurir_tag = f" | Kurir: {kurir}" if kurir else ""
+
         sheets_manager.record_mutasi(
             tipe="KELUAR",
             kode_sku=matched_sku,
@@ -3612,7 +3823,7 @@ def handle_incoming_message(message: dict) -> Tuple[bool, str, dict]:
             qty=qty_keluar,
             sisa_stok=new_qty,
             pengirim=user_name,
-            keterangan=f"Order: {pesan_seller[:80]}"
+            keterangan=f"[{layanan}]{kurir_tag} Order: {pesan_seller[:80]}"
         )
 
         warning_stok = ""
@@ -3621,18 +3832,30 @@ def handle_incoming_message(message: dict) -> Tuple[bool, str, dict]:
         elif new_qty < 10:
             warning_stok = f"\n⚠️ <i>Perhatian: Sisa stok menipis (&lt; 10 pcs). Segera restok!</i>"
 
-        telegram_msg = (
-            f"📦 <b>BARANG KELUAR (VIA KAMUS ALIAS):</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🏷️ <b>SKU:</b> <code>[{matched_sku}]</code>\n"
-            f"📦 <b>Barang:</b> {nama_standar}\n"
-            f"🔻 <b>Qty Keluar:</b> -{qty_keluar} pcs\n"
-            f"📊 <b>Sisa Stok:</b> {new_qty} pcs"
-            f"{warning_stok}\n"
-            f"<i>Tercatat di Riwayat Mutasi.</i>"
-        )
+        lines = [
+            "📦 <b>BARANG KELUAR (VIA KAMUS ALIAS):</b>",
+            "━━━━━━━━━━━━━━━━━━━━━━"
+        ]
+        if badge:
+            lines.append(badge.strip())
+            lines.append("──────────────────────")
+
+        lines.extend([
+            f"🏷️ <b>SKU:</b> <code>[{matched_sku}]</code>",
+            f"📦 <b>Barang:</b> {nama_standar}",
+            f"🔻 <b>Qty Keluar:</b> -{qty_keluar} pcs",
+            f"📊 <b>Sisa Stok:</b> {new_qty} pcs{warning_stok}",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            "<i>Tercatat di Riwayat Mutasi.</i>"
+        ])
+
+        now_wita = datetime.now(timezone(timedelta(hours=8)))
+        if now_wita.hour >= 18 or now_wita.hour < 8:
+            lines.append("🌙 <i>Catatan: Order diterima di luar jam operasional (tutup 18:00 WITA). Paket dijadwalkan dipacking pada kloter pagi besok (mulai 08:00 WITA / 07:00 WIB).</i>")
+
+        telegram_msg = "\n".join(lines)
         telegram_client.send_message(chat_id, telegram_msg, reply_to_message_id=message_id, parse_mode="HTML")
-        return True, "kamus_outflow", {"sku": matched_sku, "qty": qty_keluar}
+        return True, "kamus_outflow", {"sku": matched_sku, "qty": qty_keluar, "layanan": layanan}
 
     # PROSES VIA AI GEMINI
     logger.info("Menghubungi Gemini AI (Multi-Item Normalizer)...")
@@ -3664,6 +3887,20 @@ def handle_incoming_message(message: dict) -> Tuple[bool, str, dict]:
         return False, "ai_failed", {}
 
     final_no_resi = detected_resi or ai_result.get("no_resi", "").strip()
+
+    # Ekstraksi Layanan & Kurir dari AI dan Rule regex
+    ai_layanan = (ai_result.get("layanan_pengiriman") or "").strip().upper()
+    ai_kurir = (ai_result.get("kurir") or "").strip()
+    rule_layanan, rule_kurir = detect_shipping_service(pesan_seller)
+
+    if rule_layanan != "REGULER":
+        final_layanan = rule_layanan
+    elif ai_layanan in ["INSTANT", "SAMEDAY", "NEXT DAY", "KARGO", "HEMAT", "REGULER"]:
+        final_layanan = ai_layanan
+    else:
+        final_layanan = "REGULER"
+
+    final_kurir = rule_kurir or ai_kurir
 
     if final_no_resi:
         dup_info = sheets_manager.check_duplicate_resi(final_no_resi)
@@ -3697,7 +3934,12 @@ def handle_incoming_message(message: dict) -> Tuple[bool, str, dict]:
             kode_sku, qty_pcs, action="KELUAR"
         )
 
-        ket = f"Resi: [{final_no_resi}] | {nama_asli_seller}" if final_no_resi else f"Order: {nama_asli_seller}"
+        kurir_tag = f" | Kurir: {final_kurir}" if final_kurir else ""
+        if final_no_resi:
+            ket = f"[{final_layanan}]{kurir_tag} Resi: [{final_no_resi}] | {nama_asli_seller}"
+        else:
+            ket = f"[{final_layanan}]{kurir_tag} Order: {nama_asli_seller}"
+
         sheets_manager.record_mutasi(
             tipe="KELUAR",
             kode_sku=kode_sku,
@@ -3740,6 +3982,12 @@ def handle_incoming_message(message: dict) -> Tuple[bool, str, dict]:
         header_title,
         "━━━━━━━━━━━━━━━━━━━━━━"
     ]
+
+    badge = format_shipping_badge(final_layanan, final_kurir)
+    if badge:
+        lines.append(badge.strip())
+        lines.append("──────────────────────")
+
     if final_no_resi:
         lines.append(f"📋 <b>No. Resi:</b> <code>{final_no_resi}</code>")
     lines.append(f"👤 <b>Diproses oleh:</b> {user_name}\n")

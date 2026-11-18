@@ -269,6 +269,16 @@
           </button>
         </div>
 
+        <!-- Shipping Service Badges -->
+        <div id="shipping-stats-container" class="mb-3 hidden">
+          <div class="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800">
+            <div class="text-[11px] font-semibold text-slate-400 mb-1.5 flex items-center gap-1.5">
+              <i class="fa-solid fa-truck-fast text-sky-400"></i> Klasifikasi Pengiriman Hari Ini:
+            </div>
+            <div id="shipping-badges" class="flex flex-wrap gap-1.5"></div>
+          </div>
+        </div>
+
         <div id="leaderboard-list" class="space-y-2">
           <div class="text-center py-6 text-slate-500 text-xs">
             <i class="fa-solid fa-circle-notch fa-spin text-lg text-sky-500 mb-1"></i><br>
@@ -554,6 +564,36 @@
         const res = await fetch('/api/leaderboard');
         const data = await res.json();
         document.getElementById('leaderboard-date').innerText = data.date || 'Hari Ini';
+
+        // Render Shipping Service Stats Badges
+        const shipContainer = document.getElementById('shipping-stats-container');
+        const shipBadges = document.getElementById('shipping-badges');
+        if (data.shipping_stats && shipBadges && shipContainer) {
+          const stats = data.shipping_stats;
+          const config = [
+            { key: 'INSTANT', label: 'Instant', icon: '⚡', bg: 'bg-rose-500/10 text-rose-300 border-rose-500/30' },
+            { key: 'SAMEDAY', label: 'Sameday', icon: '🕒', bg: 'bg-amber-500/10 text-amber-300 border-amber-500/30' },
+            { key: 'NEXT DAY', label: 'Next Day', icon: '🚀', bg: 'bg-purple-500/10 text-purple-300 border-purple-500/30' },
+            { key: 'REGULER', label: 'Reguler', icon: '🚚', bg: 'bg-sky-500/10 text-sky-300 border-sky-500/30' },
+            { key: 'HEMAT', label: 'Hemat', icon: '🏷️', bg: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' },
+            { key: 'KARGO', label: 'Kargo', icon: '🚛', bg: 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30' }
+          ];
+          const activeBadges = config
+            .filter(c => stats[c.key] > 0)
+            .map(c => `
+              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border ${c.bg}">
+                <span>${c.icon} ${c.label}</span>
+                <b class="bg-black/30 px-1 rounded font-mono">${stats[c.key]}</b>
+              </span>
+            `);
+          if (activeBadges.length > 0) {
+            shipBadges.innerHTML = activeBadges.join('');
+            shipContainer.classList.remove('hidden');
+          } else {
+            shipContainer.classList.add('hidden');
+          }
+        }
+
         const sellers = data.sellers || [];
         if (sellers.length === 0) {
           container.innerHTML = `<div class="text-center py-6 text-slate-500 text-xs">Belum ada pengiriman resi hari ini.</div>`;
