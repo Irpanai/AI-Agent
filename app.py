@@ -1404,14 +1404,14 @@ class GoogleSheetsManager:
         return self._execute_with_retry(_recap)
 
     def get_leaderboard_text(self, target_date: Optional[str] = None) -> str:
-        """Menghasilkan teks ranking leaderboard seller pengirim resi terbanyak hari ini."""
+        """Menghasilkan teks ranking leaderboard seller pengirim resi terbanyak hari ini beserta rincian produk."""
         def _leaderboard():
             nonlocal target_date
             if not target_date:
                 target_date = datetime.now().strftime("%Y-%m-%d")
 
             try:
-                ws_mutasi = self.spreadsheet.worksheet(self.TAB_MUTASI)
+                ws_mutasi = self.get_worksheet(self.TAB_MUTASI)
                 records = ws_mutasi.get_all_values()
             except gspread.exceptions.WorksheetNotFound:
                 return "Belum ada catatan transaksi di Riwayat_Mutasi."
@@ -1433,10 +1433,18 @@ class GoogleSheetsManager:
                             m_resi = re.search(r'Resi:\s*\[?([A-Za-z0-9_-]+)\]?', ket)
                             resi_key = m_resi.group(1) if m_resi else f"order_{row[0]}"
 
+                            sku = row[3].strip().upper() if len(row) > 3 else ""
+                            nama = row[4].strip() if len(row) > 4 else sku
+                            if not nama:
+                                nama = sku or "Produk"
+
                             if pengirim not in seller_stats:
-                                seller_stats[pengirim] = {"resi_set": set(), "total_pcs": 0}
+                                seller_stats[pengirim] = {"resi_set": set(), "total_pcs": 0, "items": {}}
                             seller_stats[pengirim]["resi_set"].add(resi_key)
                             seller_stats[pengirim]["total_pcs"] += qty
+
+                            item_key = (sku, nama)
+                            seller_stats[pengirim]["items"][item_key] = seller_stats[pengirim]["items"].get(item_key, 0) + qty
 
             if not seller_stats:
                 tgl_str = datetime.now().strftime("%d %B %Y")
@@ -1464,12 +1472,137 @@ class GoogleSheetsManager:
                 pcs_cnt = data["total_pcs"]
                 lines.append(f"{badge} <b>{seller}</b>: <b>{resi_cnt} resi</b> <i>({pcs_cnt} pcs)</i>")
 
+                if data.get("items"):
+                    sorted_items = sorted(data["items"].items(), key=lambda it: it[1], reverse=True)
+                    item_parts = [f"{nama} (<b>{qty}</b>)" for (sku, nama), qty in sorted_items]
+                    lines.append(f"   └ 📦 <i>{', '.join(item_parts)}</i>")
+
             lines.append("\n━━━━━━━━━━━━━━━━━━━━━━")
             lines.append(f"🔥 <b>Total Hari Ini:</b> {total_semua_resi} resi ({total_semua_pcs} pcs terkirim).")
-            lines.append("<i>Terima kasih atas kerja keras seluruh seller & tim gudang! 🚀</i>")
+            lines.append("💡 <i>Ketik <code>/seller &lt;nama&gt;</code> untuk rincian detail resi & barang per seller.</i>")
             return "\n".join(lines)
 
         return self._execute_with_retry(_leaderboard)
+
+    def get_seller_detail_text(self, seller_query: Optional[str] = None, target_date: Optional[str] = None) -> str:
+        """Menampilkan rincian barang keluar dan nomor resi untuk seller tertentu atau seluruh seller."""
+        def _seller_detail():
+            nonlocal target_date
+            if not target_date:
+                target_date = datetime.now().strftime("%Y-%m-%d")
+
+            try:
+                ws_mutasi = self.get_worksheet(self.TAB_MUTASI)
+                records = ws_mutasi.get_all_values()
+            except gspread.exceptions.WorksheetNotFound:
+                return "Belum ada catatan transaksi di Riwayat_Mutasi."
+
+            seller_stats = {}
+            for row in records[1:]:
+                if len(row) >= 8:
+                    row_tgl = row[1].strip()
+                    if target_date in row_tgl or row_tgl.startswith(target_date):
+                        tipe = row[2].strip().upper()
+                        if tipe == "KELUAR":
+                            pengirim = row[7].strip() or "Seller Lapangan"
+                            try:
+                                qty = int(row[5])
+                            except ValueError:
+                                qty = 1
+
+                            ket = row[8].strip() if len(row) > 8 else ""
+                            m_resi = re.search(r'Resi:\s*\[?([A-Za-z0-9_-]+)\]?', ket)
+                            resi_key = m_resi.group(1) if m_resi else f"order_{row[0]}"
+
+                            sku = row[3].strip().upper() if len(row) > 3 else ""
+                            nama = row[4].strip() if len(row) > 4 else sku
+                            if not nama:
+                                nama = sku or "Produk"
+
+                            if pengirim not in seller_stats:
+                                seller_stats[pengirim] = {
+                                    "resi_set": set(),
+                                    "total_pcs": 0,
+                                    "items": {},
+                                    "resi_map": {}
+                                }
+                            seller_stats[pengirim]["resi_set"].add(resi_key)
+                            seller_stats[pengirim]["total_pcs"] += qty
+
+                            item_key = (sku, nama)
+                            seller_stats[pengirim]["items"][item_key] = seller_stats[pengirim]["items"].get(item_key, 0) + qty
+
+                            if resi_key not in seller_stats[pengirim]["resi_map"]:
+                                seller_stats[pengirim]["resi_map"][resi_key] = []
+                            seller_stats[pengirim]["resi_map"][resi_key].append(f"{nama} ({qty} pcs)")
+
+            tgl_str = datetime.now().strftime("%d %B %Y")
+            if not seller_stats:
+                return f"📦 <b>DATA BARANG KELUAR PER SELLER:</b>\n━━━━━━━━━━━━━━━━━━━━━━\n<i>Belum ada catatan transaksi keluar pada tanggal {tgl_str}.</i>"
+
+            # Jika ada filter seller_query
+            if seller_query:
+                q = seller_query.strip().lower()
+                matched = [s for s in seller_stats.keys() if q in s.lower()]
+                if not matched:
+                    avail = ", ".join(f"<code>{s}</code>" for s in seller_stats.keys())
+                    return (
+                        f"🔍 <b>Seller '{seller_query}' Tidak Ditemukan:</b>\n"
+                        f"Tidak ada pengiriman untuk '{seller_query}' pada tanggal {tgl_str}.\n\n"
+                        f"Seller yang tercatat aktif hari ini:\n{avail}\n\n"
+                        f"<i>Ketik <code>/seller &lt;nama&gt;</code> dengan nama yang sesuai.</i>"
+                    )
+
+                lines = []
+                for s_name in matched[:2]:
+                    data = seller_stats[s_name]
+                    resi_cnt = len(data["resi_set"])
+                    pcs_cnt = data["total_pcs"]
+                    lines.append(f"👤 <b>RINCIAN BARANG SELLER: {s_name}</b>")
+                    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+                    lines.append(f"📅 <i>Tanggal: {tgl_str}</i>")
+                    lines.append(f"📦 <b>Total Pengiriman:</b> {resi_cnt} resi ({pcs_cnt} pcs)\n")
+
+                    lines.append("🏷️ <b>Barang yang Laku / Keluar:</b>")
+                    sorted_items = sorted(data["items"].items(), key=lambda it: it[1], reverse=True)
+                    for (sku, nama), qty in sorted_items:
+                        lines.append(f"  • [{sku}] <b>{nama}</b>: <b>{qty} pcs</b>")
+
+                    lines.append("\n📋 <b>Daftar Resi Kurir:</b>")
+                    for r_num, items in list(data["resi_map"].items())[:20]:
+                        lines.append(f"  • <code>{r_num}</code>: {', '.join(items)}")
+                    if len(data["resi_map"]) > 20:
+                        lines.append(f"  <i>...dan {len(data['resi_map']) - 20} resi lainnya.</i>")
+                    lines.append("")
+                return "\n".join(lines).strip()
+
+            # Rekap seluruh seller dengan rincian barang keluar
+            sorted_sellers = sorted(
+                seller_stats.items(),
+                key=lambda x: (len(x[1]["resi_set"]), x[1]["total_pcs"]),
+                reverse=True
+            )
+
+            lines = [
+                "👥 <b>REKAP BARANG KELUAR PER SELLER HARI INI:</b>",
+                "━━━━━━━━━━━━━━━━━━━━━━",
+                f"📅 <i>Tanggal: {tgl_str}</i>\n"
+            ]
+
+            for idx, (seller, data) in enumerate(sorted_sellers, 1):
+                resi_cnt = len(data["resi_set"])
+                pcs_cnt = data["total_pcs"]
+                lines.append(f"<b>{idx}. {seller}</b> — {resi_cnt} resi ({pcs_cnt} pcs):")
+                sorted_items = sorted(data["items"].items(), key=lambda it: it[1], reverse=True)
+                for (sku, nama), qty in sorted_items:
+                    lines.append(f"   • [{sku}] {nama}: <b>{qty} pcs</b>")
+                lines.append("")
+
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+            lines.append("💡 <i>Ketik <code>/seller &lt;nama&gt;</code> untuk melihat detail resi seller tertentu.</i>")
+            return "\n".join(lines)
+
+        return self._execute_with_retry(_seller_detail)
 
     def get_leaderboard_data(self, target_date: Optional[str] = None) -> Dict[str, Any]:
         """Mengambil data leaderboard seller dalam format JSON untuk Web App."""
@@ -1479,7 +1612,7 @@ class GoogleSheetsManager:
                 target_date = datetime.now().strftime("%Y-%m-%d")
 
             try:
-                ws_mutasi = self.spreadsheet.worksheet(self.TAB_MUTASI)
+                ws_mutasi = self.get_worksheet(self.TAB_MUTASI)
                 records = ws_mutasi.get_all_values()
             except Exception:
                 return {"status": "ok", "date": datetime.now().strftime("%d %B %Y"), "sellers": []}
@@ -1501,10 +1634,18 @@ class GoogleSheetsManager:
                             m_resi = re.search(r'Resi:\s*\[?([A-Za-z0-9_-]+)\]?', ket)
                             resi_key = m_resi.group(1) if m_resi else f"order_{row[0]}"
 
+                            sku = row[3].strip().upper() if len(row) > 3 else ""
+                            nama = row[4].strip() if len(row) > 4 else sku
+                            if not nama:
+                                nama = sku or "Produk"
+
                             if pengirim not in seller_stats:
-                                seller_stats[pengirim] = {"resi_set": set(), "total_pcs": 0}
+                                seller_stats[pengirim] = {"resi_set": set(), "total_pcs": 0, "items": {}}
                             seller_stats[pengirim]["resi_set"].add(resi_key)
                             seller_stats[pengirim]["total_pcs"] += qty
+
+                            item_key = (sku, nama)
+                            seller_stats[pengirim]["items"][item_key] = seller_stats[pengirim]["items"].get(item_key, 0) + qty
 
             sorted_sellers = sorted(
                 seller_stats.items(),
@@ -1512,10 +1653,19 @@ class GoogleSheetsManager:
                 reverse=True
             )
 
-            result_sellers = [
-                {"name": seller, "resi": len(data["resi_set"]), "pcs": data["total_pcs"]}
-                for seller, data in sorted_sellers
-            ]
+            result_sellers = []
+            for seller, data in sorted_sellers:
+                sorted_items = sorted(data["items"].items(), key=lambda it: it[1], reverse=True)
+                items_list = [
+                    {"sku": sku, "nama": nama, "qty": qty}
+                    for (sku, nama), qty in sorted_items
+                ]
+                result_sellers.append({
+                    "name": seller,
+                    "resi": len(data["resi_set"]),
+                    "pcs": data["total_pcs"],
+                    "items": items_list
+                })
 
             return {
                 "status": "ok",
@@ -2591,9 +2741,21 @@ def handle_incoming_callback_query(callback_query: dict) -> Tuple[bool, str]:
     # 10. Leaderboard Seller Langsung di Chat
     elif data == "btn_leaderboard":
         lb_text = sheets_manager.get_leaderboard_text()
-        markup = {"inline_keyboard": [[{"text": "🔙 Kembali ke Menu Utama", "callback_data": "btn_menu_utama"}]]}
+        markup = {"inline_keyboard": [
+            [{"text": "👥 Rincian Lengkap Semua Seller", "callback_data": "btn_seller_detail"}],
+            [{"text": "🔙 Kembali ke Menu Utama", "callback_data": "btn_menu_utama"}]
+        ]}
         telegram_client.edit_message_text(chat_id, message_id, lb_text, reply_markup=markup)
         return True, "cb_leaderboard_sent"
+
+    elif data == "btn_seller_detail":
+        detail_text = sheets_manager.get_seller_detail_text()
+        markup = {"inline_keyboard": [
+            [{"text": "🏆 Kembali ke Leaderboard", "callback_data": "btn_leaderboard"}],
+            [{"text": "🔙 Menu Utama", "callback_data": "btn_menu_utama"}]
+        ]}
+        telegram_client.edit_message_text(chat_id, message_id, detail_text, reply_markup=markup)
+        return True, "cb_seller_detail_sent"
 
     # 11. Unduh File Excel Langsung ke Chat
     elif data == "btn_export":
@@ -2789,7 +2951,8 @@ def handle_incoming_message(message: dict) -> Tuple[bool, str, dict]:
     is_admin_cmd_attempt = clean_text.startswith((
         "/restok", "restok ", "/tambah_sku", "/tambahsku", "/opname", "opname ",
         "/laporan", "laporan", "/export", "/excel", "kirim excel", "download excel",
-        "unduh excel", "laporan excel", "/leaderboard", "/top_seller", "leaderboard", "top seller", "rekap seller"
+        "unduh excel", "laporan excel", "/leaderboard", "/top_seller", "leaderboard", "top seller", "rekap seller",
+        "/seller", "seller ", "cek seller", "barang seller"
     ))
 
     if chat_type in ["group", "supergroup"] and is_admin_cmd_attempt:
@@ -3068,7 +3231,7 @@ def handle_incoming_message(message: dict) -> Tuple[bool, str, dict]:
     # -------------------------------------------------------------------------
     # FITUR LEADERBOARD & REKAP SELLER (Khusus Admin di Chat Pribadi)
     # -------------------------------------------------------------------------
-    if clean_text in ["/leaderboard", "/top_seller", "leaderboard", "top seller", "rekap seller"]:
+    if clean_text in ["/leaderboard", "/top_seller", "leaderboard", "top seller", "rekap seller"] or clean_text.startswith(("/leaderboard", "/top_seller")):
         if chat_type != "private":
             telegram_client.send_message(
                 chat_id,
@@ -3078,8 +3241,40 @@ def handle_incoming_message(message: dict) -> Tuple[bool, str, dict]:
             )
             return False, "leaderboard_not_in_private", {}
         lb_text = sheets_manager.get_leaderboard_text()
-        telegram_client.send_message(chat_id, lb_text, reply_to_message_id=message_id, parse_mode="HTML")
+        markup = {"inline_keyboard": [
+            [{"text": "👥 Rincian Semua Seller", "callback_data": "btn_seller_detail"}],
+            [{"text": "🔙 Kembali ke Menu Utama", "callback_data": "btn_menu_utama"}]
+        ]}
+        telegram_client.send_message(chat_id, lb_text, reply_to_message_id=message_id, reply_markup=markup, parse_mode="HTML")
         return True, "leaderboard_sent", {}
+
+    # -------------------------------------------------------------------------
+    # FITUR CEK BARANG PER SELLER (/seller atau /seller <nama>)
+    # -------------------------------------------------------------------------
+    if clean_text.startswith("/seller") or clean_text.startswith("seller ") or clean_text in ["seller", "rekap seller", "cek seller", "barang seller"]:
+        if chat_type != "private":
+            telegram_client.send_message(
+                chat_id,
+                "⛔ <i>Rincian Barang Seller merupakan fitur internal khusus Admin di chat pribadi.</i>",
+                reply_to_message_id=message_id,
+                parse_mode="HTML"
+            )
+            return False, "seller_not_in_private", {}
+
+        parts = clean_text.split(maxsplit=1)
+        seller_query = None
+        if len(parts) > 1 and parts[0] in ["/seller", "seller", "cek", "barang"]:
+            seller_query = parts[1].strip()
+        elif len(parts) > 1:
+            seller_query = parts[1].strip()
+
+        detail_text = sheets_manager.get_seller_detail_text(seller_query=seller_query)
+        markup = {"inline_keyboard": [
+            [{"text": "🏆 Lihat Leaderboard", "callback_data": "btn_leaderboard"}],
+            [{"text": "🔙 Kembali ke Menu Utama", "callback_data": "btn_menu_utama"}]
+        ]}
+        telegram_client.send_message(chat_id, detail_text, reply_to_message_id=message_id, reply_markup=markup, parse_mode="HTML")
+        return True, "seller_detail_sent", {}
 
     # -------------------------------------------------------------------------
     # FITUR KOREKSI STOCK OPNAME (Khusus Admin di Japri)

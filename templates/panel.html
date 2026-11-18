@@ -563,19 +563,33 @@
         const medals = ['🥇', '🥈', '🥉'];
         container.innerHTML = sellers.map((s, idx) => {
           const badge = medals[idx] || `<span class="font-bold text-slate-400">${idx+1}.</span>`;
+          const itemsHtml = (s.items && s.items.length > 0)
+            ? `<div class="mt-2.5 pt-2 border-t border-slate-700/50 flex flex-wrap gap-1.5">` +
+                s.items.map(it => `
+                  <span class="inline-flex items-center gap-1 bg-slate-800/90 text-sky-300 text-[11px] px-2 py-0.5 rounded-md border border-slate-700/60 font-medium">
+                    <span>${it.nama}</span>
+                    <b class="text-white bg-sky-950 px-1 py-0.2 rounded font-mono">${it.qty} pcs</b>
+                  </span>
+                `).join('') +
+              `</div>`
+            : '';
+
           return `
-            <div class="glass-card p-3 rounded-xl border border-slate-800 flex items-center justify-between">
-              <div class="flex items-center gap-2.5">
-                <span class="text-base">${badge}</span>
-                <div>
-                  <h4 class="font-semibold text-xs text-slate-200">${s.name}</h4>
-                  <span class="text-[10px] text-slate-400">${s.pcs} pcs barang</span>
+            <div class="glass-card p-3.5 rounded-xl border border-slate-800">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                  <span class="text-base">${badge}</span>
+                  <div>
+                    <h4 class="font-semibold text-xs text-slate-200">${s.name}</h4>
+                    <span class="text-[10px] text-slate-400 font-mono">${s.pcs} pcs barang</span>
+                  </div>
+                </div>
+                <div class="text-right">
+                  <span class="text-sm font-bold text-sky-400">${s.resi}</span>
+                  <span class="text-[10px] text-slate-400 block -mt-1">resi</span>
                 </div>
               </div>
-              <div class="text-right">
-                <span class="text-sm font-bold text-sky-400">${s.resi}</span>
-                <span class="text-[10px] text-slate-400 block -mt-1">resi</span>
-              </div>
+              ${itemsHtml}
             </div>
           `;
         }).join('');
